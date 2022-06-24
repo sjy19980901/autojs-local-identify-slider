@@ -34,8 +34,9 @@
   
   B站演示视频：https://www.bilibili.com/video/BV17f4y1f7Yo?spm_id_from=333.999.0.0&vd_source=e6ebbd11cb537395ed4cdaf9d72e8d5c
   
-  脚本技术交流群：756920516
+  新建脚本技术交流群：756920516
   
+  ![在这里插入图片描述](https://img-blog.csdnimg.cn/img_convert/e6ee2b26056aa358b39da42fc85933bc.png#pic_center)
   
   可加微信与我讨论技术问题：ivi158722
   
