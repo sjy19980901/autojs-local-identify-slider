@@ -1,0 +1,40 @@
+{
+  "assets": [],
+  "build": {
+    "build_id": "E4E4DE3C-1",
+    "build_number": 1,
+    "build_time": 1655624817012,
+    "release": false
+  },
+  "encryptLevel": 0,
+  "useFeatures": [],
+  "icon": "images/ic_app_logo.png",
+  "launchConfig": {
+    "displaySplash": false,
+    "hideLogs": false,
+    "splashText": "",
+    "stableMode": false
+  },
+  "main": "main.js",
+  "name": "本地滑块识别",
+  "optimization": {
+    "obfuscateComponents": false,
+    "removeAccessibilityService": false,
+    "removeOpenCv": false,
+    "unusedResources": false
+  },
+  "packageName": "com.local.slidingBlock",
+  "permissionConfig": {
+    "manifestPermissions": [
+      "android.permission.WRITE_SETTINGS",
+      "android.permission.SYSTEM_ALERT_WINDOW"
+    ],
+    "requestListOnStartup": [
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.WRITE_SETTINGS"
+    ]
+  },
+  "scripts": {},
+  "versionCode": 1,
+  "versionName": "1.0.0"
+}
