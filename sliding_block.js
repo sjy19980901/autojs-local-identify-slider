@@ -2,175 +2,809 @@
  * 虎哥Autojs本地滑块识别插件
  * 
  * 支持所有分辨率
- * 支持所有图形
- * 200毫秒以内识别
- * 原理上支持市面所有滑块
- * 99%的识别率
- * 
- * 说下算法思路：
- * 1、首先通过找色工具，获取两个图标(源图标,目标图标)的相同区域的色值。(重点)
- *      什么是相同区域的色值呢？就是对于图标的外线的相对区域的色值，如果色值找准确了，
- *      那么这两个区域的形状应该是相同的，我建议目标图标的区域形状需要比源图标的区域形状稍大一些，可更容易找到x坐标，
- *      改变形状大小可通过颜色偏移来修改，偏移越小，获取到的点越少，区域也越小，反之亦然。
- * 2、找色值的偏移，一般情况下，目标图标需要比源图标区域大一些，一样也可以，自己多测试，
- * 我这里使用的是按键精灵的找色工具，或者图灵识别，看二值化的图很方便。
- * 3、把找到的源图标色值，偏移带入到方法images.findAllPointsForColor中，用于找到相关色值的所有坐标。
- * 4、取出源图标的区域范围，通过坐标的上下左右最大值获取即可。
- * 5、从左边x坐标的最大值中取出对应的y坐标，得到最左边的x，y坐标，也就是一个最左边的点
- * 6、把第5步获取的点与所有的坐标进行对比，取出这些坐标相对于最左边点的所有相对坐标，用于多点找色。
- * 7、依据搜索类型来判断搜索次数。
- * 8、通过第4步获取到的源图标区域范围，取出目标图标的查找区域范围(用于减少搜索区域面积)
- *      原理：因为都是横着滑，所以目标图标的topY与bottomY与源图标是一样的，或者增加3-5像素，减少找不到的可能性。
- * 9、把图片二值化处理，用于多点找色。
- * 10、把第2、6、7、9步得到的结果放入方法images.findMultiColors中，因为是循环查找，每次循环将会使阈值累加5点，直到找到为止。
- * 
- * 
- * B站演示视频：https://www.bilibili.com/video/BV17f4y1f7Yo?spm_id_from=333.999.0.0&vd_source=e6ebbd11cb537395ed4cdaf9d72e8d5c
- * 脚本技术交流群：756920516
  * 
  */
+// 初始化opencv
+runtime.images.initOpenCvIfNeeded();
 
-
+//引入包和类
+importPackage(org.opencv.core);
+importClass(java.util.ArrayList);
+importClass(org.opencv.imgcodecs.Imgcodecs);
+importClass(org.opencv.imgproc.Imgproc);
+importPackage(java.lang)
 
 slidingBlock = {};
 
-
-
+var imgPath, originThresholdImgPath, targetThresholdImgPath, gScale, gWidth, gHeight, gAreaOffset, mat, cList, isError = false, hasOrigin = false;
+var soX1, soY1, soX2, soY2, stX1, stY1, stX2, stY2, sSim;
+var shapeJudge = false;
+var gRightX;
 
 /**
- * 识别滑块图片并返回目标x坐标
- * threshold：找色时颜色相似度的临界值，范围为0 ~ 255（越小越相似，0为颜色相等，255为任何颜色都能匹配）。
- * 默认为4。threshold和浮点数相似度(0.0~1.0)的换算为 similarity = (255 - threshold) / 255.
+ * 
  * @param {Image} img 滑块图片
- * @param {string} oColor 源图标16进制颜色
- * @param {string} tColor 目标图标16进制颜色
- * @param {int} oThreshold 源图标相似度临界值(可选)
- * @param {int} tByteThreshold 缺口二值化相似度临界值(可选)
- * @param {int} searchType 查找形式：0=快速查找，找不到可能性较大。1=中速查找，可能找不到(默认)。2=慢速查找，一定会找到，但可能位置有问题。
- * @returns x坐标
+ * @param {int} rScale 缩小比例，(0.1-1,省略默认1)
+ * @param {JSON} rangObj 识别范围对象，用于检测缺口轮廓时识别的图片范围
+ *      @param {int} x1 左
+ *      @param {int} y1 上
+ *      @param {int} x2 右
+ *      @param {int} y2 下
+ * @param {int} judgeType 检测轮廓机制 1=通过颜色判断轮廓和大小 2=通过二值化判断轮廓和大小
+ * @param {JSON} colorObj (二选一)缺口颜色检测对象，当缺口颜色相同时使用
+ *      @param {string} targetColor 目标缺口颜色
+ *      @param {string} targetColorOffset 目标缺口颜色偏移(范围)(10-150,省略默认16)
+ *      @param {string} originColor 源缺口颜色(可省略)
+ *      @param {string} originColorOffset 源缺口颜色偏移(范围)(10-150,省略默认16)
+ * @param {JSON} thresholdObj (二选一)缺口灰度值检测对象，当缺口颜色时使用
+ *      @param {int} min 二值化的最小值
+ *      @param {int} max 二值化的最大值
+ * @param {JSON} sizeObj 缺口大小检测对象，当缺口大小相同时使用
+ *      @param {int} width 缺口宽
+ *      @param {int} height 缺口高
+ *      @param {int} sizeOffset 大小相似度(0-20,省略默认5)
+ * @param {JSON} shapeObj 可省略，缺口形状检测对象，当滑块具有干扰缺口时使用，用来判断源缺口与目标缺口形状是否相同。
+ *      @param {JSON} origin 源缺口识别范围对象
+ *          @param {int} x1 左
+ *          @param {int} y1 上
+ *          @param {int} x2 右
+ *          @param {int} y2 下
+ *      @param {JSON} target 目标缺口识别范围对象
+ *          @param {int} x1 左
+ *          @param {int} y1 上
+ *          @param {int} x2 右
+ *          @param {int} y2 下
+ *      @param {int} sim 形状相似度(0-20,省略默认5)
+ * @param {string} ImagePath 可省略，滑块图片保存路径
+ * @returns 目标缺口中间x坐标值
  */
- slidingBlock.discernSlidingblock = function(img,oColor,tColor,oThreshold,tByteThreshold,searchType) {
-    let start = new Date().getTime();
-
-    oThreshold = oThreshold == undefined ? 32 : oThreshold;
-    tByteThreshold = tByteThreshold == undefined ? 30 : tByteThreshold;
-    searchType = searchType == undefined ? 1 : searchType;
-    let findColor = "#FFFFFF";
-
-    let arr = images.findAllPointsForColor(img, oColor,{threshold:oThreshold});
-
-    // 获取上下左右每个坐标的最大值，用于进行后续的目标图标区域查找
-    let pArr = slidingBlock.getRectPos(arr);
-    let leftX = pArr[0],topY = pArr[1],rightX = pArr[2],bottomY = pArr[3];
-    
-    // 获取最左边的x坐标对应的y坐标
-    let y = slidingBlock.getPosY(arr,leftX);
-    let posArr = [];firstColor = [leftX,y];
-
-    // 以最左边的坐标为基准，查找所有与它相同颜色的坐标偏移，对应目标图标查找的posArr
-    for(let i=0;i < arr.length;i++){
-        let point = arr[i];
-        let xOffset = point.x - firstColor[0];
-        let yOffset = point.y - firstColor[1];
-        posArr[i] = [xOffset,yOffset,findColor];
-    }
-
-    // 根据查找形式进行搜索次数的赋值
-    var searchCount;
-    if(searchType == 0){
-        searchCount = 1;
-    }else if(searchType == 1){
-        searchCount = 10;
-    }else{
-        searchCount = 100;
-    }
-    
-    // 查找目标图标的区域范围
-    let arr3 = [rightX, topY-5, img.getWidth() - rightX, bottomY - topY+5];
-    console.log("查找图片范围："+arr3);
-    let aSearchCount = 0;
+slidingBlock.discernSlidingblock = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
 
 
-    var p;
-    for(let i =0 ; i < searchCount;i++){
-        // 将图片二值化
-        let thImg = images.interval(img, tColor,tByteThreshold + i * 5);
+    let times = slidingBlockCore(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
 
-        // 用于不产生异常，如果不加会报数组索引过界异常，异常原因现不明确。
-        images.save(thImg,files.getSdcardPath() + "/1.png");
-        p = images.findMultiColors(thImg,findColor, posArr, {
-            region: arr3,
-            threshold:0
-        });
 
-        thImg.recycle();
-        aSearchCount++;
-        if(p != null ){
-            break;
-        }
-    }
-    console.log("查找次数：",aSearchCount);
+    if (isError) {    //识别出错
+        console.error("填写参数格式错误");
+        return -1;
+    } else if (cList.size() > 0) {    //说明找到了轮廓
+        let points = cList.get(cList.size() - 1).toList();
+        let rightX = getPoint(points, 2);
+        let leftX = getPoint(points, 4);
 
-    img.recycle();
-    if(p != null){
-        // 如果找到了，那么这个点是最左边的，我们要取中间点
-        resultX = p.x + (rightX - leftX) / 2;
-
-        // 如果使用了缩小比例，那么就将坐标对应放大
-        // resultX *= reduceRide;
-        console.info("最终滑块结果为:x=",resultX);
-        let end = new Date().getTime();
-        console.log("用时毫秒:",end-start);
+        resultX = (leftX + (rightX - leftX) / 2) / rScale;
+        console.log("用时毫秒:", times);
+        console.info("最终滑块结果为:x=", resultX);
         return resultX;
-    }else{
-        let end = new Date().getTime();
-        console.log("用时毫秒:",end-start);
+    } else {  //未找到轮廓
+        console.log("用时毫秒:", times);
         console.error("未找到x");
         return -1;
     }
+
+
+}
+
+
+/**
+ * 展示经过范围检测后的图片，范围检测为第一步
+ * @param {Image} img 滑块图片
+ * @param {int} rScale 缩小比例，(0.1-1,省略默认1)
+ * @param {JSON} rangObj 识别范围对象，用于检测缺口轮廓时识别的图片范围
+ *      @param {int} x1 左
+ *      @param {int} y1 上
+ *      @param {int} x2 右
+ *      @param {int} y2 下
+ * @param {int} judgeType 检测轮廓机制 1=通过颜色判断轮廓和大小 2=通过二值化判断轮廓和大小
+ * @param {JSON} colorObj (二选一)缺口颜色检测对象，当缺口颜色相同时使用
+ *      @param {string} targetColor 目标缺口颜色
+ *      @param {string} targetColorOffset 目标缺口颜色偏移(范围)(10-150,省略默认16)
+ *      @param {string} originColor 源缺口颜色(可省略)
+ *      @param {string} originColorOffset 源缺口颜色偏移(范围)(10-150,省略默认16)
+ * @param {JSON} thresholdObj (二选一)缺口灰度值检测对象，当缺口颜色时使用
+ *      @param {int} min 二值化的最小值
+ *      @param {int} max 二值化的最大值
+ * @param {JSON} sizeObj 缺口大小检测对象，当缺口大小相同时使用
+ *      @param {int} width 缺口宽
+ *      @param {int} height 缺口高
+ *      @param {int} sizeOffset 大小相似度(0-20,省略默认5)
+ * @param {JSON} shapeObj 可省略，缺口形状检测对象，当滑块具有干扰缺口时使用，用来判断源缺口与目标缺口形状是否相同。
+ *      @param {JSON} origin 源缺口识别范围对象
+ *          @param {int} x1 左
+ *          @param {int} y1 上
+ *          @param {int} x2 右
+ *          @param {int} y2 下
+ *      @param {JSON} target 目标缺口识别范围对象
+ *          @param {int} x1 左
+ *          @param {int} y1 上
+ *          @param {int} x2 右
+ *          @param {int} y2 下
+ *      @param {int} sim 形状相似度(0-20,省略默认5)
+ * @param {string} ImagePath 可省略，滑块图片保存路径
+ * @param {string} writePath 
+ * @param {int} showType 展示形式 1=展示轮廓图，2=展示二值化图
+ * @param {int} showPos 展示图片位置 1=展示处理目标缺口后的图片，2=展示处理源缺口后的图片，可以与展示形式配合使用，如果展示形式等于1，那么将展示所有的轮廓(源缺口+目标缺口)(可省略，默认为1)
+ */
+slidingBlock.discernSlidingblockTestByRange = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath, writePath, showType, showPos) {
+
+    let list = getOutlineList1(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+    showImage(list, writePath, showType, showPos);
 }
 
 /**
- * 返回x坐标对应的y坐标
- * @param {Array} arr 坐标数组
+ * 展示经过大小检测后的图片，大小检测为第二步
+ */
+slidingBlock.discernSlidingblockTestBySize = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath, writePath, showType, showPos) {
+
+    let list = getOutlineList2(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+    showImage(list, writePath, showType, showPos);
+}
+
+
+/**
+ * 展示经过形状检测(去除干扰项)后的图片，形状检测为第三步
+ */
+slidingBlock.discernSlidingblockTestByShape = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath, writePath, showType, showPos) {
+
+    let list = getOutlineList3(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+    showImage(list, writePath, showType, showPos);
+}
+
+
+/**
+ * 展示图片，内部方法
+ * @param {Array} list 轮廓列表
+ * @param {string} writePath 图片写入路径
+ * @param {int} showType 展示形式：1=展示轮廓图，2=展示二值化图
+ * @param {int} showPos 展示图片位置 1=展示处理目标缺口后的图片，2=展示处理源缺口后的图片，可以与展示形式配合使用，如果展示形式等于1，那么将展示所有的轮廓(源缺口+目标缺口)(可省略，默认为1)
+ * @returns 
+ */
+function showImage(list, writePath, showType, showPos) {
+    if (isError) {
+        console.error("填写参数格式错误");
+        return;
+    }
+
+    writePath = writePath == undefined || writePath == null ? "/sdcard/-1.png" : writePath;
+    showPos = showPos == undefined || showPos == null ? 1 : showPos;
+
+    discernSlidingblockTestByList(list, writePath, showType, showPos)
+}
+
+
+/**
+ * 被showImage调用，通过list轮廓列表展示图片，内部方法
+ * @param {Array} list 轮廓列表
+ * @param {string} writePath 图片写入路径
+ * @param {int} showType 展示形式：1=展示轮廓图，2=展示二值化图
+ * @param {int} showPos 展示图片位置 1=展示处理目标缺口后的图片，2=展示处理源缺口后的图片，可以与展示形式配合使用，如果展示形式等于1，那么将展示所有的轮廓(源缺口+目标缺口)(可省略，默认为1)
+ */
+function discernSlidingblockTestByList(list, writePath, showType, showPos) {
+    let mat3;
+
+    if (showType == 1) {
+        // 读图片路径转为mat
+        mat3 = Imgcodecs.imread(imgPath, 1);
+        // 绘制轮廓
+        Imgproc.drawContours(mat3, list, -1, new Scalar(0, 255, 0), Imgproc.LINE_4, Imgproc.LINE_AA);
+        Imgcodecs.imwrite(writePath, mat3);
+        app.viewFile(writePath);    //显示图片
+    } else if (showType == 2) {
+        if (showPos == 2) {
+            mat3 = Imgcodecs.imread(originThresholdImgPath, 0);
+        } else if (showPos == 1) {
+            mat3 = Imgcodecs.imread(targetThresholdImgPath, 0);
+        }
+
+        Imgcodecs.imwrite(writePath, mat3);
+        app.viewFile(writePath);    //显示图片
+    }
+
+}
+
+/**
+ * 放大或缩小长度，取决于gScale的值
+ * @param {int} len 
+ * @returns 
+ */
+function getLengthByScale(len) {
+    return len * gScale;
+}
+
+/**
+ * 获取第一步(范围检测)处理完的轮廓列表
+ * @returns 轮廓列表
+ */
+function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
+
+
+    let targetColor, targetColorOffset, originColor, originColorOffset, width, height, sizeOffset, tMin, tMax, targetTempPath;
+    let oX1, oY1, oX2, oY2;
+    gScale = rScale;
+
+    if (rangeObj == null) {
+        // 如果为空则为全图范围查找
+        oX1 = 0;
+        oY1 = 0;
+        oX2 = img.getWidth();
+        oY2 = img.getHeight();
+    } else {
+        oX1 = rangeObj.x1;
+        oY1 = rangeObj.y1;
+        oX2 = rangeObj.x2;
+        oY2 = rangeObj.y2;
+    }
+
+    oX1 = getLengthByScale(oX1);
+    oY1 = getLengthByScale(oY1);
+    oX2 = getLengthByScale(oX2);
+    oY2 = getLengthByScale(oY2);
+
+
+    if (sizeObj == null || sizeObj == undefined) {
+        return setError("请添加大小判断对象!");
+    }
+
+    if (shapeObj != null && shapeObj != undefined) {
+        shapeJudge = true;
+        soX1 = getLengthByScale(shapeObj.origin.x1);
+        soY1 = getLengthByScale(shapeObj.origin.y1);
+        soX2 = getLengthByScale(shapeObj.origin.x2);
+        soY2 = getLengthByScale(shapeObj.origin.y2);
+
+        stX1 = getLengthByScale(shapeObj.target.x1);
+        stY1 = getLengthByScale(shapeObj.target.y1);
+        stX2 = getLengthByScale(shapeObj.target.x2);
+        stY2 = getLengthByScale(shapeObj.target.y2);
+        sSim = getLengthByScale(shapeObj.sim);
+    }
+
+    width = getLengthByScale(sizeObj.width);
+    height = getLengthByScale(sizeObj.height);
+    sizeOffset = getLengthByScale(sizeObj.sizeOffset) == undefined ? getLengthByScale(16) : getLengthByScale(sizeObj.sizeOffset);
+    targetTempPath = "/sdcard/-2.png";
+    originTempPath = "/sdcard/-3.png";
+    ImagePath = ImagePath == undefined ? "/sdcard/-99.png" : ImagePath;
+    gWidth = width;
+    gHeight = height;
+    gAreaOffset = sizeOffset;
+    imgPath = ImagePath;
+    originThresholdImgPath = originTempPath;
+    targetThresholdImgPath = targetTempPath;
+
+    img = images.scale(img, rScale, rScale);
+    images.save(img, ImagePath);
+    mat = Imgcodecs.imread(ImagePath, 1);
+
+    if (judgeType == 1) {
+        if (colorObj == null || colorObj == undefined) {
+            return setError("当前检测轮廓机制为颜色检测(1),请添加颜色判断对象!");
+        }
+
+        targetColor = colorObj.targetColor;
+        targetColorOffset = colorObj.targetColorOffset == undefined ? 16 : colorObj.targetColorOffset;
+        let image1 = images.interval(img, targetColor, targetColorOffset);
+        images.save(image1, targetTempPath);
+        image1.recycle();
+
+        if (colorObj.originColor != undefined) {
+            hasOrigin = true;
+            originColor = colorObj.originColor;
+            originColorOffset = colorObj.originColorOffset == undefined ? 16 : colorObj.originColorOffset;
+            let image2 = images.interval(img, originColor, originColorOffset);
+            images.save(image2, originTempPath);
+            image1.recycle();
+        }
+    } else if (judgeType == 2) {
+        if (thresholdObj == null || thresholdObj == undefined) {
+            return setError("当前检测轮廓机制为二值化检测(2),请添加灰度值判断对象!");
+        }
+
+        tMin = thresholdObj.min < 0 ? 0 : thresholdObj.min;
+        tMax = thresholdObj.max > 255 ? 255 : thresholdObj.max;
+
+        let nMat = new Mat();
+        Imgproc.threshold(mat, nMat, tMin, tMax, Imgproc.THRESH_BINARY);
+
+        Imgcodecs.imwrite(targetTempPath, nMat);
+    }
+
+    let mat2 = Imgcodecs.imread(targetTempPath, 0);
+    let list = new ArrayList();
+    let hierarchy = new Mat();
+    Imgproc.findContours(mat2, list, hierarchy, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_NONE);
+    if (hasOrigin) {
+        let mat3 = Imgcodecs.imread(originTempPath, 0);
+        let list2 = new ArrayList();
+        let hierarchy2 = new Mat();
+        Imgproc.findContours(mat3, list2, hierarchy2, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_NONE);
+        list.addAll(list2);
+    }
+
+
+    list = getGraphRangePointList(list, oX1, oY1, oX2, oY2);
+
+    return list;
+}
+
+
+
+/**
+ * 获取第二步(大小检测)处理完的轮廓列表
+ * @returns 轮廓列表
+ */
+function getOutlineList2(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
+    let list = getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+
+    if (list.size() > 1) {
+        list = getGraphSizePointList(list);
+    }
+
+    return list;
+}
+
+/**
+ * 获取第三步(形状检测)处理完的轮廓列表
+ * @returns 轮廓列表
+ */
+function getOutlineList3(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
+    let list = getOutlineList2(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+
+    if (list.size() > 1 && shapeJudge) {
+        list = getShapePointList(list, soX1, soY1, soX2, soY2, stX1, stY1, stX2, stY2, sSim);
+    }
+
+    return list;
+}
+
+
+
+/**
+ * 内部调用滑块识别方法，计算出图形x坐标位置并返回处理时间
+ * @returns
+ */
+function slidingBlockCore(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
+
+    let start = new Date().getTime();
+    let list = getOutlineList3(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+
+    cList = list;
+
+    let end = new Date().getTime();
+    return end - start;
+}
+
+/**
+ * 当识别出错时产生报错，一般出现于用户参数填写错误。
+ * @param {string} str 报错信息
+ * @returns x坐标，直接返回-1
+ */
+function setError(str) {
+    console.error(str);
+    isError = true;
+    return -1;
+}
+
+
+/**
+ * 
+ * 通过形状检测(去除干扰项)查找符合条件的list轮廓列表，并将符合的列表返回
+ * @param {Array} list 轮廓列表
+ * @param {int} soX1 源缺口查找范围最左边
+ * @param {int} soY1 源缺口查找范围最上边
+ * @param {int} soX2 源缺口查找范围最右边
+ * @param {int} soY2 源缺口查找范围最下边
+ * @param {int} stX1 目标缺口查找范围最左边
+ * @param {int} stY1 目标缺口查找范围最上边
+ * @param {int} stX2 目标缺口查找范围最右边
+ * @param {int} stY2 目标缺口查找范围最下边
+ * @param {int} sSim 源缺口与目标缺口相似度，(0-15，一般5就可以了)
+ * @returns 轮廓列表
+ */
+function getShapePointList(list, soX1, soY1, soX2, soY2, stX1, stY1, stX2, stY2, sSim) {
+    let points = new ArrayList();
+
+    let fLeftX, fTopY, fRightX, fBottomY;
+    for (let i = 0; i < list.size(); i++) {
+        let matOfPoint = list.get(i);
+        let maxY = getPoint(matOfPoint.toList(), 1);
+        let maxX = getPoint(matOfPoint.toList(), 2);
+        let minY = getPoint(matOfPoint.toList(), 3);
+        let minX = getPoint(matOfPoint.toList(), 4);
+        if (minX >= soX1 && maxX <= soX2 && minY >= soY1 && maxY <= soY2) {
+            fLeftX = minX;
+            fTopY = minY;
+            fRightX = maxX;
+            fBottomY = maxY;
+            break;
+        }
+    }
+
+    for (let i = 0; i < list.size(); i++) {
+        let matOfPoint = list.get(i);
+        let maxY = getPoint(matOfPoint.toList(), 1);
+        let maxX = getPoint(matOfPoint.toList(), 2);
+        let minY = getPoint(matOfPoint.toList(), 3);
+        let minX = getPoint(matOfPoint.toList(), 4);
+        if (minX >= stX1 && maxX <= stX2 && minY >= stY1 && maxY <= stY2) {
+            points.add(matOfPoint);
+        }
+    }
+
+
+    let points2 = new ArrayList();
+    for (let i = 0; i < points.size(); i++) {
+        let matOfPoint = points.get(i);
+        let maxY = getPoint(matOfPoint.toList(), 1);
+        let maxX = getPoint(matOfPoint.toList(), 2);
+        let minY = getPoint(matOfPoint.toList(), 3);
+        let minX = getPoint(matOfPoint.toList(), 4);
+        if (minX >= (fLeftX + gWidth) && maxX >= (fRightX + gWidth) && fTopY <= (minY + sSim) && fTopY >= (minY - sSim) && fBottomY <= (maxY + sSim) && fBottomY >= (maxY - sSim)) {
+            points2.add(matOfPoint);
+        }
+    }
+
+    console.log("通过形状特征对比发现符合特征轮廓数量：%d个", points2.size());
+    return points2;
+}
+
+
+/**
+ * 通过大小检测查找符合条件的list轮廓列表，并将符合的列表返回
+ * @param {Array} list 轮廓列表
+ * @returns 轮廓列表
+ */
+function getGraphSizePointList(list) {
+    let points = new ArrayList();
+    for (let i = 0; i < list.size(); i++) {
+        let matOfPoint = list.get(i);
+        let ofPoint = judgeSize(matOfPoint, gWidth, gHeight, gAreaOffset);
+        if (ofPoint != null) {
+            points.add(ofPoint);
+        }
+    }
+    console.log("通过缺口大小对比发现符合特征轮廓数量：%d个", points.size());
+    return points;
+}
+
+
+/**
+ * 通过范围检测查找符合条件的list轮廓列表，并将符合的列表返回
+ * @param {Array} list 轮廓列表
+ * @param {int} leftX 图片最左边
+ * @param {int} topY 图片最上边
+ * @param {int} rightX 图片最右边
+ * @param {int} bottomY 图片最下边
+ * @returns 轮廓列表
+ */
+function getGraphRangePointList(list, leftX, topY, rightX, bottomY) {
+    let points = new ArrayList();
+    for (let i = 0; i < list.size(); i++) {
+        let matOfPoint = list.get(i);
+        let maxY = getPoint(matOfPoint.toList(), 1);
+        let maxX = getPoint(matOfPoint.toList(), 2);
+        let minY = getPoint(matOfPoint.toList(), 3);
+        let minX = getPoint(matOfPoint.toList(), 4);
+        if (minX >= leftX && maxX <= rightX && minY >= topY && maxY <= bottomY) {
+            points.add(matOfPoint);
+        }
+    }
+    console.log("通过缺口位置范围对比发现符合特征轮廓数量：%d个", points.size());
+    if (points.size() == 0) {
+        console.error("请检查坐标范围数组是否填写正确!");
+    }
+    return points;
+}
+
+/**
+ * 判断当前传入的轮廓是否符合指定大小，符合返回此轮廓，不符合返回null
+ * @param {Object} point 单个轮廓
+ * @param {int} width 检测轮廓宽度
+ * @param {int} height 检测轮廓高度
+ * @param {int} offset 检测轮廓大小相似度(0-20)
+ * @returns 单个轮廓
+ */
+function judgeSize(point, width, height, offset) {
+    let points = point.toList();
+    let maxY = 0;
+    let maxX = 0;
+    let minY = Integer.MAX_VALUE;
+    let minX = Integer.MAX_VALUE;
+    for (let i = 0; i < points.size(); i++) {
+        let point1 = points.get(i);
+
+        if (point1.y > maxY) {
+            maxY = point1.y;
+        }
+
+        if (point1.x > maxX) {
+            maxX = point1.x;
+        }
+
+        if (point1.y < minY) {
+            minY = point1.y;
+        }
+
+        if (point1.x < minX) {
+            minX = point1.x;
+        }
+    }
+
+    let maxWidth = maxX - minX;
+    let maxHeight = maxY - minY;
+
+    if (maxWidth <= (width + offset) && maxWidth >= (width - offset) && maxHeight <= (height + offset) && maxHeight >= (height - offset)) {
+        return point;
+    }
+
+    return null;
+}
+
+/**
+ * 获取极限坐标值
+ * @param list 坐标数组
+ * @param type 获取坐标类型：1=最长y，2=最长x，3=最短y，4=最短x
+ * @return  指定坐标值
+ */
+function getPoint(list, type) {
+    let maxY = 0;
+    let maxX = 0;
+    let minY = Integer.MAX_VALUE;
+    let minX = Integer.MAX_VALUE;
+    for (let i = 0; i < list.size(); i++) {
+        let point = list.get(i);
+
+        if (type == 1 && point.y > maxY) {
+            maxY = point.y;
+        }
+
+        if (type == 2 && point.x > maxX) {
+            maxX = point.x;
+        }
+
+        if (type == 3 && point.y < minY) {
+            minY = point.y;
+        }
+
+        if (type == 4 && point.x < minX) {
+            minX = point.x;
+        }
+    }
+
+    let result = -1;
+    if (maxY > 0) {
+        result = maxY;
+    } else if (maxX > 0) {
+        result = maxX;
+    } else if (minY < Integer.MAX_VALUE) {
+        result = minY;
+    } else if (minX < Integer.MAX_VALUE) {
+        result = minX;
+    }
+
+    return result;
+}
+
+
+/**
+ * 仿人工滑动滑块
+ * @param {int} x1 滑动初始x坐标
+ * @param {int} y1 滑动初始y坐标
+ * @param {int} x2 滑动目标x坐标
+ * @param {int} y2 滑动目标y坐标
+ * @param {int} x3 滑块图片的右坐标
+ * @param {int} type 仿人工滑动类型
+ *      0=机器滑动(均匀速度滑动)
+ *      1=超出滑块缺口后慢慢返回直到对准缺口(默认)
+ *      2=当快到达滑块缺口后慢慢滑动直到对准缺口
+ *      3=四阶贝塞尔曲线方式滑动，四阶贝塞尔曲线百度地址：https://baike.baidu.com/item/%E8%B4%9D%E5%A1%9E%E5%B0%94%E6%9B%B2%E7%BA%BF
+ */
+slidingBlock.personSwipe = function (x1, y1, x2, y2, x3, type) {
+    type = type == undefined || type == null ? 1 : type;
+    gRightX = x3;
+    var runSwipe = "swipe" + type + "(" + x1 + "," + y1 + "," + x2 + "," + y2 + ")"
+    eval(runSwipe);
+}
+
+/**
+ * 滑块拖动0：机器滑动(均匀速度滑动)
+ * @param {int} x1 滑动初始x坐标
+ * @param {int} y1 滑动初始y坐标
+ * @param {int} x2 滑动目标x坐标
+ * @param {int} y2 滑动目标y坐标
+ */
+function swipe0(x1, y1, x2, y2) {
+    let stayTimes = (x2 - x1) * 3;
+    swipe(x1, y1, x2, y2, stayTimes);
+}
+
+/**
+ * 滑块拖动1：超出滑块缺口后慢慢返回直到对准缺口
+ * @param {int} x1 滑动初始x坐标
+ * @param {int} y1 滑动初始y坐标
+ * @param {int} x2 滑动目标x坐标
+ * @param {int} y2 滑动目标y坐标
+ */
+function swipe1(x1, y1, x2, y2) {
+    let x4 = (x2 + 100) > gRightX ? gRightX : x2 + 100
+    let times = (parseInt((x4 - x1) / 3) + 200 + 100 * 5) * 5
+    console.log("滑动用时:"+times);
+    let posArr = [0,times]; //滑动坐标数组
+    
+    for(let i=x1;i <=x4;i+=3){
+        posArr.push(pushPosArr(i,y2))
+    }
+
+    let stayX = posArr[posArr.length-1][0];
+    for(let i = stayX;i >= (stayX-2);i-=0.01){
+        posArr.push([i,y2]);
+    }
+
+    x4 = x4 - 2;
+    for(let i = x4; i >= x2; i-=0.2){
+        posArr.push(pushPosArr(i,y2))
+    }
+
+    gestures(posArr);
+}
+
+
+/**
+ * 滑块拖动2：当快到达滑块缺口后慢慢滑动直到对准缺口
+ * @param {int} x1 滑动初始x坐标
+ * @param {int} y1 滑动初始y坐标
+ * @param {int} x2 滑动目标x坐标
+ * @param {int} y2 滑动目标y坐标
+ */
+function swipe2(x1, y1, x2, y2) {
+
+    let x4 = (x2 - 100) < x1 ? x1 : x2 - 100
+    let times = (parseInt((x4 - x1) / 3) + 200 + (x2 - x4) * 5) * 5
+    console.log("滑动用时:"+times);
+    let posArr = [0,times]; //滑动坐标数组
+    
+    for(let i=x1;i <=x4;i+=3){
+        posArr.push(pushPosArr(i,y2))
+    }
+
+    let stayX = posArr[posArr.length-1][0];
+    for(let i = stayX;i <= (stayX+2);i+=0.01){
+        posArr.push([i,y2]);
+    }
+
+    x4 = x4 + 2;
+    for(let i = x4; i <= x2; i+=0.2){
+        posArr.push(pushPosArr(i,y2))
+    }
+
+    gestures(posArr);
+}
+
+/**
+ * 滑块拖动3：四阶贝塞尔曲线方式滑动
+ * @param {int} x1 滑动初始x坐标
+ * @param {int} y1 滑动初始y坐标
+ * @param {int} x2 滑动目标x坐标
+ * @param {int} y2 滑动目标y坐标
+ */
+function swipe3(x1, y1, x2, y2) {
+    randomSwipe(x1, y1, x2, y2);
+}
+
+
+function bezierCreate(x1, y1, x2, y2, x3, y3, x4, y4) {
+    //构建参数
+    var h = 100;
+    var cp = [{ x: x1, y: y1 + h }, { x: x2, y: y2 + h }, { x: x3, y: y3 + h }, { x: x4, y: y4 + h }];
+    var numberOfPoints = 100;
+    var curve = [];
+    var dt = 1.0 / (numberOfPoints - 1);
+    //计算轨迹
+    for (var i = 0; i < numberOfPoints; i++) {
+        var ax, bx, cx;
+        var ay, by, cy;
+        var tSquared, tCubed;
+        var result_x, result_y;
+        cx = 3.0 * (cp[1].x - cp[0].x);
+        bx = 3.0 * (cp[2].x - cp[1].x) - cx;
+        ax = cp[3].x - cp[0].x - cx - bx;
+        cy = 3.0 * (cp[1].y - cp[0].y);
+        by = 3.0 * (cp[2].y - cp[1].y) - cy;
+        ay = cp[3].y - cp[0].y - cy - by;
+        var t = dt * i
+        tSquared = t * t;
+        tCubed = tSquared * t;
+        result_x = (ax * tCubed) + (bx * tSquared) + (cx * t) + cp[0].x;
+        result_y = (ay * tCubed) + (by * tSquared) + (cy * t) + cp[0].y;
+        curve[i] = {
+            x: result_x,
+            y: result_y
+        };
+    }
+
+    //轨迹转路数组
+    var array = [];
+    for (var i = 0; i < curve.length; i++) {
+        try {
+            var j = (i < 100) ? i : (199 - i);
+            xx = parseInt(curve[j].x)
+            yy = parseInt(Math.abs(100 - curve[j].y))
+        } catch (e) {
+            break
+        }
+        array.push([xx, yy])
+    }
+    return array
+}
+
+
+
+/**
+ * 把x和y坐标放入数组中
  * @param {int} x x坐标
- * @returns y坐标
+ * @param {int} y y坐标
  */
- slidingBlock.getPosY = function(arr,x){
-    for(let i =0;i < arr.length;i++){
-        if(arr[i].x == x){
-            return arr[i].y;
-        }
-    }
+ function pushPosArr(x,y){
+    let y2 = randomNum(y-5, y+5);
+    return [x,y2];
 }
 
+/**
+ * 生成随机数
+ * @param {int} min 最小值
+ * @param {int} max 最大值 
+ * @returns 随机数
+ */
+function randomNum(min, max) {
+    // console.log(min,max);
+    let r = Math.floor(Math.random() * (max - min + 1) + min);
+    // console.log(r);
+    return r;
+}
 
 
 /**
- * 返回所有坐标的上下左右最大值
- * @param {Array} arr 关于某个颜色及偏移的所有坐标数组
- * @returns 上下左右最大值数组
- */
- slidingBlock.getRectPos = function(arr){
-    let rightX = 0,leftX = 9999,topY=9999,bottomY=0;
-    for(let i=0;i < arr.length;i++){
-        let point = arr[i];
-        if(rightX < point.x){
-            rightX = point.x;
-        }
-        if(leftX > point.x){
-            leftX = point.x;
-        }
-        if(topY>point.y){
-            topY = point.y;
-        }
-        if(bottomY < point.y){
-            bottomY = point.y; 
-        }
+* 真人模拟滑动函数
+*
+* 传入值：起点终点坐标
+* 效果：模拟真人滑动
+*/
+function randomSwipe(sx, sy, ex, ey) {
+    //设置随机滑动时长范围
+    var timeMin = 2500
+    var timeMax = 3500
+    //设置控制点极限距离
+    var leaveHeightLength = 500
+    //根据偏差距离，应用不同的随机方式
+    if (Math.abs(ex - sx) > Math.abs(ey - sy)) {
+        var my = (sy + ey) / 2
+        var y2 = my + random(0, leaveHeightLength)
+        var y3 = my - random(0, leaveHeightLength)
+        var lx = (sx - ex) / 3
+        if (lx < 0) { lx = -lx }
+        var x2 = sx + lx / 2 + random(0, lx)
+        var x3 = sx + lx + lx / 2 + random(0, lx)
+    } else {
+        var mx = (sx + ex) / 2
+        var y2 = mx + random(0, leaveHeightLength)
+        var y3 = mx - random(0, leaveHeightLength)
+
+        var ly = (sy - ey) / 3
+        if (ly < 0) { ly = -ly }
+        var y2 = sy + ly / 2 + random(0, ly)
+        var y3 = sy + ly + ly / 2 + random(0, ly)
     }
 
-    //左，上，右，下
-    return [leftX,topY,rightX,bottomY];
+    //获取运行轨迹，及参数
+    var time = [0, random(timeMin, timeMax)]
+    var track = bezierCreate(sx, sy, x2, y2, x3, y3, ex, ey)
+    console.log("滑动用时:"+time[1]);
+
+    //滑动
+    let str = time.concat(track);
+    gestures(str)
 }
+
+
 
 module.exports = slidingBlock;//回调
