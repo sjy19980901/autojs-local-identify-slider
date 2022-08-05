@@ -293,7 +293,7 @@ function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
             originColorOffset = colorObj.originColorOffset == undefined ? 16 : colorObj.originColorOffset;
             let image2 = images.interval(img, originColor, originColorOffset);
             images.save(image2, originTempPath);
-            image1.recycle();
+            image2.recycle();
         }
     } else if (judgeType == 2) {
         if (thresholdObj == null || thresholdObj == undefined) {
@@ -308,6 +308,8 @@ function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
 
         Imgcodecs.imwrite(targetTempPath, nMat);
     }
+
+    img.recycle(); 
 
     let mat2 = Imgcodecs.imread(targetTempPath, 0);
     let list = new ArrayList();
@@ -614,7 +616,7 @@ slidingBlock.personSwipe = function (x1, y1, x2, y2, x3, type) {
  * @param {int} y2 滑动目标y坐标
  */
 function swipe0(x1, y1, x2, y2) {
-    let stayTimes = (x2 - x1) * 3;
+    let stayTimes = (x2 - x1) * 5;
     swipe(x1, y1, x2, y2, stayTimes);
 }
 

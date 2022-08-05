@@ -46,10 +46,13 @@ function test(){
     // showWeixin(2);
     // findWeixin();
     swipeWeixin();
+
+    $debug.gc(); //此处可以进行内存垃圾回收
 }
 
 
 function init(){
+    $debug.setMemoryLeakDetectionEnabled(false); //autojs机制即使图片回收了也会显示内存泄漏，于是就让它不显示~
     console.show();
     unlock();
     if($images.getScreenCaptureOptions() == null){
@@ -360,8 +363,8 @@ function findWeixin(){
  */
 function swipeWeixin(){
     initWeixin();
-    console.log("3秒后开始验证");
-    sleep(3000);
+    // console.log("3秒后开始验证");
+    // sleep(3000);
 
     let picObj = textContains("请拖动滑块完成拼图").findOne().parent().parent().parent().child(1).child(0).child(0);
     let rect = picObj.bounds();
@@ -376,12 +379,15 @@ function swipeWeixin(){
         let y2 = btnObj.bounds().centerY();
         let x3 = rect.right;
 
-        slidingBlock.personSwipe(x1,y1,x2,y2,x3,1);
+        slidingBlock.personSwipe(x1,y1,x2,y2,x3,2);
     }else{
         console.error("未识别到x坐标");
     }
 
 }
+
+
+
 
 /**
  * 把屏幕中的滑块图片截取出来返回成image
@@ -392,15 +398,9 @@ function swipeWeixin(){
  * @returns 截取区域后的image图片
  */
 function capturePic(x,y,width,height){
-    let path = "/sdcard/-5.png";
-    images.captureScreen(path);
-    var src = images.read(path);
-    var clip = images.clip(src,x,y,width,height);
+    let src = captureScreen();
+    let clip =  images.clip(src,x,y,width,height);
     src.recycle();
-    // let times = new Date().getTime();
-    // let savePath = "/sdcard/"+times+".png";
-    // console.info("保存路径:"+savePath);
-    // images.save(clip, savePath);
     return clip;
 }
 
