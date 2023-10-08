@@ -5,11 +5,9 @@
  * 
  */
 // 初始化opencv
-runtime.images.initOpenCvIfNeeded();
-
 //引入包和类
 importPackage(org.opencv.core);
-importClass(java.util.ArrayList);
+importPackage(java.util);
 importClass(org.opencv.imgcodecs.Imgcodecs);
 importClass(org.opencv.imgproc.Imgproc);
 importPackage(java.lang)
@@ -20,6 +18,7 @@ var imgPath, originThresholdImgPath, targetThresholdImgPath, gScale, gWidth, gHe
 var soX1, soY1, soX2, soY2, stX1, stY1, stX2, stY2, sSim;
 var shapeJudge = false;
 var gRightX;
+let oWidth,oHeight,oSim,imgWidth;
 
 /**
  * 
@@ -128,7 +127,7 @@ slidingBlock.discernSlidingblock = function (img, rScale, rangObj, judgeType, co
 slidingBlock.discernSlidingblockTestByRange = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath, writePath, showType, showPos) {
 
     let list = getOutlineList1(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
-    showImage(list, writePath, showType, showPos);
+    slidingBlock.showImage(list, writePath, showType, showPos);
 }
 
 /**
@@ -137,7 +136,7 @@ slidingBlock.discernSlidingblockTestByRange = function (img, rScale, rangObj, ju
 slidingBlock.discernSlidingblockTestBySize = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath, writePath, showType, showPos) {
 
     let list = getOutlineList2(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
-    showImage(list, writePath, showType, showPos);
+    slidingBlock.showImage(list, writePath, showType, showPos);
 }
 
 
@@ -147,7 +146,7 @@ slidingBlock.discernSlidingblockTestBySize = function (img, rScale, rangObj, jud
 slidingBlock.discernSlidingblockTestByShape = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath, writePath, showType, showPos) {
 
     let list = getOutlineList3(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
-    showImage(list, writePath, showType, showPos);
+    slidingBlock.showImage(list, writePath, showType, showPos);
 }
 
 
@@ -159,13 +158,13 @@ slidingBlock.discernSlidingblockTestByShape = function (img, rScale, rangObj, ju
  * @param {int} showPos 展示图片位置 1=展示处理目标缺口后的图片，2=展示处理源缺口后的图片，可以与展示形式配合使用，如果展示形式等于1，那么将展示所有的轮廓(源缺口+目标缺口)(可省略，默认为1)
  * @returns 
  */
-function showImage(list, writePath, showType, showPos) {
+slidingBlock.showImage = function(list, writePath, showType, showPos) {
     if (isError) {
         console.error("填写参数格式错误");
         return;
     }
 
-    writePath = writePath == undefined || writePath == null ? "/sdcard/-1.png" : writePath;
+    writePath = writePath == undefined || writePath == null ? "/sdcard/Pictures/sliding/-1.png" : writePath;
     showPos = showPos == undefined || showPos == null ? 1 : showPos;
 
     discernSlidingblockTestByList(list, writePath, showType, showPos)
@@ -261,10 +260,13 @@ function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
 
     width = getLengthByScale(sizeObj.width);
     height = getLengthByScale(sizeObj.height);
+    oWidth = width;
+    oHeight = height
+    oSim = sizeObj.sim
     sizeOffset = getLengthByScale(sizeObj.sizeOffset) == undefined ? getLengthByScale(16) : getLengthByScale(sizeObj.sizeOffset);
-    targetTempPath = "/sdcard/-2.png";
-    originTempPath = "/sdcard/-3.png";
-    ImagePath = ImagePath == undefined ? "/sdcard/-99.png" : ImagePath;
+    targetTempPath = "/sdcard/Pictures/sliding/-2.png";
+    originTempPath = "/sdcard/Pictures/sliding/-3.png";
+    ImagePath = ImagePath == undefined ? "/sdcard/Pictures/sliding/-99.png" : ImagePath;
     gWidth = width;
     gHeight = height;
     gAreaOffset = sizeOffset;
@@ -273,6 +275,8 @@ function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
     targetThresholdImgPath = targetTempPath;
 
     img = images.scale(img, rScale, rScale);
+    imgWidth = img.getWidth();
+    imgHeight = img.getHeight();
     images.save(img, ImagePath);
     mat = Imgcodecs.imread(ImagePath, 1);
 
@@ -300,13 +304,61 @@ function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
             return setError("当前检测轮廓机制为二值化检测(2),请添加灰度值判断对象!");
         }
 
-        tMin = thresholdObj.min < 0 ? 0 : thresholdObj.min;
-        tMax = thresholdObj.max > 255 ? 255 : thresholdObj.max;
 
-        let nMat = new Mat();
-        Imgproc.threshold(mat, nMat, tMin, tMax, Imgproc.THRESH_BINARY);
+        if(shapeObj == null || shapeObj.target == null || shapeObj.origin == null){
+            soX1 = 0;
+            soY1 = 0;
+            soX2 = img.getWidth() / 4;
+            soY2 = img.getHeight();
+            stX1 = soX2;
+            stY1 = 0
+            stX2 = img.getWidth()
+            stY2 = img.getHeight();
+        }else{
+            soX1 = getLengthByScale(shapeObj.origin.x1);
+            soY1 = getLengthByScale(shapeObj.origin.y1);
+            soX2 = getLengthByScale(shapeObj.origin.x2);
+            soY2 = getLengthByScale(shapeObj.origin.y2);
 
-        Imgcodecs.imwrite(targetTempPath, nMat);
+            stX1 = getLengthByScale(shapeObj.target.x1);
+            stY1 = getLengthByScale(shapeObj.target.y1);
+            stX2 = getLengthByScale(shapeObj.target.x2);
+            stY2 = getLengthByScale(shapeObj.target.y2);
+            sSim = getLengthByScale(shapeObj.sim);
+        }
+
+
+        //原缺口mat图像
+        console.info(img.getWidth(),img.getHeight());
+        console.info(soX2,soY2);
+        let oPath = "/sdcard/Pictures/sliding/oImg.png";
+        let oImg = images.clip(img, soX1, soY1, soX2-soX1, soY2-soY1);
+        images.save(oImg,oPath);
+        let oMat = Imgcodecs.imread(oPath, 1);
+        oMin = thresholdObj.origin.min < 0 ? 0 : thresholdObj.origin.min;
+        oMax = thresholdObj.origin.max > 255 ? 255 : thresholdObj.origin.max;
+        let onMat = new Mat();
+        Imgproc.threshold(oMat, onMat, oMin, oMax, Imgproc.THRESH_BINARY_INV);
+
+        //目标缺口mat图像
+        let tPath = "/sdcard/Pictures/sliding/tImg.png";
+        let tImg = images.clip(img, stX1, stY1, stX2-stX1, stY2-stY1);
+        images.save(tImg, tPath);
+        let tMat = Imgcodecs.imread(tPath, 1);
+        tMin = thresholdObj.target.min < 0 ? 0 : thresholdObj.target.min;
+        tMax = thresholdObj.target.max > 255 ? 255 : thresholdObj.target.max;
+        let tnMat = new Mat();
+        Imgproc.threshold(tMat, tnMat, tMin, tMax, Imgproc.THRESH_BINARY);
+
+        let concatMat = new Mat( img.getHeight(), img.getWidth(), onMat.type());
+        Core.hconcat([onMat, tnMat], concatMat);
+        
+        Imgcodecs.imwrite(targetTempPath, concatMat);
+        Imgcodecs.imwrite(imgPath, concatMat);
+
+
+        oImg.recycle();
+        tImg.recycle();
     }
 
     img.recycle(); 
@@ -314,12 +366,12 @@ function getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
     let mat2 = Imgcodecs.imread(targetTempPath, 0);
     let list = new ArrayList();
     let hierarchy = new Mat();
-    Imgproc.findContours(mat2, list, hierarchy, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_NONE);
+    Imgproc.findContours(mat2, list, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE);
     if (hasOrigin) {
         let mat3 = Imgcodecs.imread(originTempPath, 0);
         let list2 = new ArrayList();
         let hierarchy2 = new Mat();
-        Imgproc.findContours(mat3, list2, hierarchy2, Imgproc.RETR_TREE, Imgproc.CHAIN_APPROX_NONE);
+        Imgproc.findContours(mat3, list2, hierarchy2, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE);
         list.addAll(list2);
     }
 
@@ -339,7 +391,7 @@ function getOutlineList2(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
     let list = getOutlineList1(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
 
     if (list.size() > 1) {
-        list = getGraphSizePointList(list);
+        list = getShapePointList(list);
     }
 
     return list;
@@ -347,18 +399,98 @@ function getOutlineList2(img, rScale, rangeObj, judgeType, colorObj, thresholdOb
 
 /**
  * 获取第三步(形状检测)处理完的轮廓列表
+ * 废除的方法
  * @returns 轮廓列表
  */
 function getOutlineList3(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
     let list = getOutlineList2(img, rScale, rangeObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
 
-    if (list.size() > 1 && shapeJudge) {
-        list = getShapePointList(list, soX1, soY1, soX2, soY2, stX1, stY1, stX2, stY2, sSim);
+    if (list.size() > 1) {
+        list = getSizePointList(list);
     }
 
     return list;
 }
 
+
+function getSizePointList(filteredContours){
+    filteredContours = sortFilter(filteredContours,"height",oHeight-oSim*oHeight/100,oHeight+oSim*oHeight/100);
+    filteredContours = sortFilter(filteredContours,"width",oWidth-oSim*oWidth/100,oWidth+oSim*oWidth/100);
+    filteredContours = sortFilter(filteredContours,"y",0,imgWidth);
+   
+    let isResult = false;
+    if(filteredContours.size() > 1){
+        for (let i = 0; i < filteredContours.size(); i++) {
+            let rect = Imgproc.boundingRect(filteredContours.get(i));
+            if(rect.x < imgWidth / 5){
+                isResult = true;
+                break;
+            }
+        }
+    }
+
+    if(!isResult){
+        filteredContours = new ArrayList();
+    }
+    console.log("最终结果数量:%d个", filteredContours.size());
+
+    return filteredContours;
+}
+
+/**
+ * 排序过滤
+ * @returns
+ */
+function sortFilter(list,property,minFilter,maxFilter){
+    let filteredContours4 = new ArrayList();
+    //排序 过滤y
+    for (let i = 0; i < list.size(); i++) {
+        let inserted = false;
+        let e = list.get(i);
+        for (let j = 0; j < filteredContours4.size(); j++) {
+
+            let rect1 = Imgproc.boundingRect(e);
+            let rect2 = Imgproc.boundingRect(list.get(j));
+            let r = eval("rect1."+property + " < " + "rect2." + property);
+            if (r) {
+                filteredContours4.add(j, e);
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            filteredContours4.add(e);
+        }
+    }
+
+    let filteredContours5 = new ArrayList();
+    let sim = oSim
+
+    console.log(filteredContours4.size())
+    for (let i = 0; i < filteredContours4.size(); i++) {
+        for (let j = i + 1; j < filteredContours4.size(); j++) {
+
+            let rect1 = Imgproc.boundingRect(filteredContours4.get(i));
+            let rect2 = Imgproc.boundingRect(filteredContours4.get(j));
+            let difference =eval("Math.abs(rect1."+property+" - rect2."+property+")");
+            let threshold = eval("rect1."+property + " * sim / 100");
+            let evalStr = "rect1."+property +" >= " + minFilter +" && rect1."+property + " <= " + maxFilter;
+            let r = eval(evalStr);
+            console.log("形状筛选"+property+":"+JSON.stringify(rect1)+","+JSON.stringify(rect2) + "--"+ r);
+            if ( difference <= threshold && r) {
+                console.log("形状筛选合格值"+property+":"+JSON.stringify(rect1)+","+JSON.stringify(rect2));
+                filteredContours5.add(filteredContours4.get(i));
+                filteredContours5.add(filteredContours4.get(j));
+                break;
+            }
+        }
+    }
+
+    let filteredContoursSet5 = new HashSet(filteredContours5);
+    filteredContours5 = new ArrayList(filteredContoursSet5)
+
+    return filteredContours5;
+}
 
 
 /**
@@ -403,51 +535,126 @@ function setError(str) {
  * @param {int} sSim 源缺口与目标缺口相似度，(0-15，一般5就可以了)
  * @returns 轮廓列表
  */
-function getShapePointList(list, soX1, soY1, soX2, soY2, stX1, stY1, stX2, stY2, sSim) {
-    let points = new ArrayList();
+function getShapePointList(list) {
 
-    let fLeftX, fTopY, fRightX, fBottomY;
-    for (let i = 0; i < list.size(); i++) {
-        let matOfPoint = list.get(i);
-        let maxY = getPoint(matOfPoint.toList(), 1);
-        let maxX = getPoint(matOfPoint.toList(), 2);
-        let minY = getPoint(matOfPoint.toList(), 3);
-        let minX = getPoint(matOfPoint.toList(), 4);
-        if (minX >= soX1 && maxX <= soX2 && minY >= soY1 && maxY <= soY2) {
-            fLeftX = minX;
-            fTopY = minY;
-            fRightX = maxX;
-            fBottomY = maxY;
-            break;
+    let filteredContours = new ArrayList();
+    let minArea = oHeight * oWidth / 30 //面积
+    let maxLength = 12 * (oHeight + oWidth) //周长
+    let sim = oSim
+    console.log(minArea +":"+maxLength+":"+sim);
+
+    // //排序
+    // for (let i = 0; i < list.size(); i++) {
+    //     let inserted = false;
+    //     let e = list.get(i);
+    //     for (let j = 0; j < filteredContours.size(); j++) {
+    //         if (Imgproc.contourArea(e) < Imgproc.contourArea(filteredContours.get(j))) {
+    //             filteredContours.add(j, e);
+    //             inserted = true;
+    //             break;
+    //         }
+    //     }
+    //     if (!inserted) {
+    //         filteredContours.add(e);
+    //     }
+    // }
+
+    // let filteredContours1 = new ArrayList()
+
+    // for (let i = 0; i < filteredContours.size(); i++) {
+    //     for (let j = i + 1; j < filteredContours.size(); j++) {
+
+    //         let area1 = Imgproc.contourArea(filteredContours.get(i));
+    //         let area2 = Imgproc.contourArea(filteredContours.get(j));
+    //         let difference = Math.abs(area1 - area2);
+    //         let threshold = area1 * sim / 100; // 计算阈值
+
+    //         console.log(area1,area2)
+    //         if (minArea <= area1 && minArea <= area2 && difference <= threshold) {
+    //             console.log("面积筛选合格值:"+area1+","+area2);
+    //             filteredContours1.add(filteredContours.get(i));
+    //             filteredContours1.add(filteredContours.get(j));
+    //             break;
+    //         }
+    //     }
+    // }
+
+    let filteredContoursSet = new HashSet(list);
+    filteredContours1 = new ArrayList(filteredContoursSet)
+
+    let filteredContours2 = new ArrayList();
+    //排序
+    for (let i = 0; i < filteredContours1.size(); i++) {
+        let inserted = false;
+        let e = filteredContours1.get(i);
+        for (let j = 0; j < filteredContours2.size(); j++) {
+            if ( Imgproc.arcLength(new MatOfPoint2f(e.toArray()),true) < Imgproc.arcLength(new MatOfPoint2f(filteredContours2.get(j).toArray()),true)) {
+                filteredContours2.add(j, e);
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            filteredContours2.add(e);
         }
     }
 
-    for (let i = 0; i < list.size(); i++) {
-        let matOfPoint = list.get(i);
-        let maxY = getPoint(matOfPoint.toList(), 1);
-        let maxX = getPoint(matOfPoint.toList(), 2);
-        let minY = getPoint(matOfPoint.toList(), 3);
-        let minX = getPoint(matOfPoint.toList(), 4);
-        if (minX >= stX1 && maxX <= stX2 && minY >= stY1 && maxY <= stY2) {
-            points.add(matOfPoint);
+    let filteredContours3 =  new ArrayList()
+    for (let i = 0; i < filteredContours2.size(); i++) {
+        for (let j = i + 1; j < filteredContours2.size(); j++) {
+
+            let length1 = Imgproc.arcLength(new MatOfPoint2f(filteredContours2.get(i).toArray()),true);
+            let length2 = Imgproc.arcLength(new MatOfPoint2f(filteredContours2.get(j).toArray()),true);
+            let difference = Math.abs(length1 - length2);
+            let threshold = length1 * sim / 100; // 计算阈值
+
+            console.log(length1,length2)
+            if (difference <= threshold && length1 < maxLength) {
+                console.log("周长筛选合格值:"+length1+","+length2);
+                filteredContours3.add(filteredContours2.get(i));
+                filteredContours3.add(filteredContours2.get(j));
+                break;
+
+            }
         }
     }
 
 
-    let points2 = new ArrayList();
-    for (let i = 0; i < points.size(); i++) {
-        let matOfPoint = points.get(i);
-        let maxY = getPoint(matOfPoint.toList(), 1);
-        let maxX = getPoint(matOfPoint.toList(), 2);
-        let minY = getPoint(matOfPoint.toList(), 3);
-        let minX = getPoint(matOfPoint.toList(), 4);
-        if (minX >= (fLeftX + gWidth) && maxX >= (fRightX + gWidth) && fTopY <= (minY + sSim) && fTopY >= (minY - sSim) && fBottomY <= (maxY + sSim) && fBottomY >= (maxY - sSim)) {
-            points2.add(matOfPoint);
+    let filteredContoursSet3 = new HashSet(filteredContours3);
+    filteredContours3 = new ArrayList(filteredContoursSet3)
+
+    console.log("通过周长面积特征对比发现符合特征轮廓数量：%d个", filteredContours3.size());
+
+    return filteredContours3;
+}
+
+
+
+
+/**
+ * 求出近似范围数组
+ * @param {int} ArrayList 
+ * @returns 
+ */
+function findNumbersWithinRange(array,sim) {
+    let result = new ArrayList();
+
+    // 对数组进行排序
+    Arrays.sort(array);
+
+    for (let i = 0; i < array.size() - 1; i++) {
+        for (let j = i + 1; j < array.size(); j++) {
+            let difference = Math.abs(array.get(i) - array.get(j));
+            let threshold = array.get(i) * sim / 100; // 计算阈值
+
+            if (difference <= threshold) {
+                result.add(array.get(i));
+                result.add(array.get(j));
+            }
         }
     }
 
-    console.log("通过形状特征对比发现符合特征轮廓数量：%d个", points2.size());
-    return points2;
+    return result;
 }
 
 
@@ -586,6 +793,25 @@ function getPoint(list, type) {
 
     return result;
 }
+
+/**
+ * 获取第一波大致结果
+ */
+slidingBlock.getFirstSlideResult = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
+
+    let list = getOutlineList2(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+    return list;
+}
+
+/**
+ * 获取结果
+ */
+slidingBlock.getSlideResult = function (img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath) {
+
+    let list = getOutlineList3(img, rScale, rangObj, judgeType, colorObj, thresholdObj, sizeObj, shapeObj, ImagePath);
+    return list;
+}
+
 
 
 /**
